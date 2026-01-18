@@ -1,0 +1,5 @@
+- Add a column to define what template type this is (section template or full page template)
+- For section template, return everything that is of section template type
+- Show based on the category recorded
+- How do you show only the ones created by admins?
+	- Check by the user? if the user's role is admin, then ok.

@@ -1,0 +1,4 @@
+- Setup all environment until you can run `yarn dev-editor` on root
+- Aware of README and notion engineering for reference.
+- Focus on fixing a couple of bugs to touch many parts of the app
+- 

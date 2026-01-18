@@ -1,0 +1,2 @@
+- Nakas deket meja kerja
+- 

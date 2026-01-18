@@ -1,0 +1,12 @@
+{
+	"nodes":[
+		{"type":"group","id":"1718cf5e62348f09","x":-400,"y":-480,"width":1180,"height":1040,"label":"The Zapier for GPT Prompts"},
+		{"type":"text","text":"Target Market: User who wants to use GPT to solve their arbitrary problem, but doesn't know how to prompt the GPT\n\nExample Product: Hustle GPT\n\nAssumptions:\n- There will be more prompt engineer in the field\n- Prompt engineers want to make money from their prompts\n- End User want what the prompt engineers can offer\n- Most of end user will always opt into using pre-defined prompt rather than tweaking it.\n- End user is willing to pay for the prompts\n\nQuestions to be answered:\n1. What kinds of prompts will the end user be willing to pay?\n\t1. HustleGPT (source?)\n\t2. ANYTHING ELSE?\n\n","id":"e07be66158378acf","x":-380,"y":-171,"width":407,"height":631},
+		{"type":"file","file":"Excalidraw/target-market-venn.excalidraw.md","id":"146ea1a9d8084366","x":100,"y":-460,"width":400,"height":311},
+		{"id":"3b395d2dbee2113e","x":-380,"y":-460,"width":180,"height":60,"type":"text","text":"March 22, 2023"},
+		{"id":"276a8c2193c75920","x":100,"y":-44,"width":400,"height":378,"type":"text","text":"Putri:\n- Prompt Engineers will eventually become developer, they develop hyperspecific GPT powered apps that is better suited for the end user.\n\nEnd-user only wants the simplest form of the app, which is probably going to look like a simple form. Or is it?\n\nWhat if they want something like a growth tracker where the app also need to track user progress?"}
+	],
+	"edges":[
+		{"id":"cca5375191ae25f5","fromNode":"146ea1a9d8084366","fromSide":"left","toNode":"e07be66158378acf","toSide":"top"}
+	]
+}

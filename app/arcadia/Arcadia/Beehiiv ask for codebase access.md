@@ -1,0 +1,1 @@
+Hi team, in order to make the transition as smooth as possible. Is it possible for Putri, Kevin, & I get access to the codebase that we will be working on?
