@@ -1,1 +1,0 @@
-Satellites takes picture of the stars in their field of view, identify the stars, calculate the angles + distance

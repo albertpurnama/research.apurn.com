@@ -1,7 +1,7 @@
-import fs from "fs";
+import fs from "node:fs";
+import path from "node:path";
 import matter from "gray-matter";
 import { BookOpen, FileText, Search } from "lucide-react";
-import path from "path";
 import ReactMarkdown from "react-markdown";
 
 interface FileInfo {

@@ -1,2 +1,0 @@
-- uniqlo x jujutsu
-- 
