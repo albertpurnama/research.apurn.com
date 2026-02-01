@@ -15,7 +15,7 @@ if (!JWT_SECRET) {
 const secretKey = new TextEncoder().encode(JWT_SECRET);
 
 export async function verifyPassword(password: string): Promise<boolean> {
-  return bcrypt.compare(password, PASSWORD_HASH);
+  return await bcrypt.compare(password, PASSWORD_HASH);
 }
 
 export async function createSession(): Promise<string> {
