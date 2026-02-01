@@ -15,7 +15,7 @@ title: Agent Search - Implementation Plan
 | Runtime | **Bun** |
 | API Framework | **Hono** (or Elysia) |
 | Database | **Postgres** |
-| Vector DB | **Qdrant** |
+| Vector DB | **Chroma** |
 | Cache | **Redis** |
 | Embeddings | **OpenAI** |
 | Hosting | **Railway** |
@@ -55,7 +55,7 @@ No frontend. API only.
 │     ┌────────────┼────────────┐         │
 │     ▼            ▼            ▼         │
 │ ┌────────┐  ┌────────┐  ┌────────┐     │
-│ │Postgres│  │ Redis  │  │ Qdrant │     │
+│ │Postgres│  │ Redis  │  │ Chroma │     │
 │ └────────┘  └────────┘  └────────┘     │
 │                                          │
 └─────────────────────────────────────────┘
@@ -75,7 +75,7 @@ agent-search/
 │   │   └── categories.ts  # GET /categories
 │   ├── services/
 │   │   ├── db.ts          # Postgres client
-│   │   ├── vector.ts      # Qdrant client
+│   │   ├── vector.ts      # Chroma client
 │   │   ├── embeddings.ts  # OpenAI embeddings
 │   │   └── cache.ts       # Redis client
 │   ├── scraper/
@@ -219,32 +219,48 @@ export default {
 ## Search Implementation
 
 ```typescript
-// src/routes/search.ts
-import { QdrantClient } from '@qdrant/js-client-rest';
-import { getEmbedding } from '../services/embeddings';
+// src/services/vector.ts
+import { ChromaClient } from 'chromadb';
 
-const qdrant = new QdrantClient({ url: process.env.QDRANT_URL });
+const chroma = new ChromaClient({ 
+  path: process.env.CHROMA_URL || 'http://localhost:8000' 
+});
+
+let collection: any;
+
+export async function getCollection() {
+  if (!collection) {
+    collection = await chroma.getOrCreateCollection({ 
+      name: 'agents',
+      metadata: { 'hnsw:space': 'cosine' }
+    });
+  }
+  return collection;
+}
+
+// src/routes/search.ts
+import { getCollection } from '../services/vector';
+import { getEmbedding } from '../services/embeddings';
 
 export async function search(query: string, limit = 20) {
   const start = Date.now();
   
-  // Generate embedding for query
+  const collection = await getCollection();
   const embedding = await getEmbedding(query);
   
-  // Search Qdrant
-  const results = await qdrant.search('agents', {
-    vector: embedding,
-    limit,
-    with_payload: true,
+  const results = await collection.query({
+    queryEmbeddings: [embedding],
+    nResults: limit,
   });
   
   return {
     query,
-    results: results.map(r => ({
-      ...r.payload,
-      similarity: r.score,
+    results: results.ids[0].map((id: string, i: number) => ({
+      id,
+      ...results.metadatas[0][i],
+      similarity: 1 - (results.distances?.[0]?.[i] || 0),
     })),
-    count: results.length,
+    count: results.ids[0].length,
     took_ms: Date.now() - start,
   };
 }
@@ -290,8 +306,7 @@ Bun.cron('0 * * * *', scrapeMoltbookIntros);
 # .env
 DATABASE_URL=postgresql://...
 REDIS_URL=redis://...
-QDRANT_URL=https://...
-QDRANT_API_KEY=...
+CHROMA_URL=http://localhost:8000
 OPENAI_API_KEY=sk-...
 ```
 
@@ -335,7 +350,7 @@ git push
     "hono": "^4.0.0",
     "drizzle-orm": "^0.30.0",
     "postgres": "^3.4.0",
-    "@qdrant/js-client-rest": "^1.8.0",
+    "chromadb": "^1.8.0",
     "openai": "^4.0.0",
     "redis": "^4.6.0"
   },
@@ -353,7 +368,7 @@ git push
 | Week | Deliverable |
 |------|-------------|
 | 1 | Bun + Hono setup, Postgres schema, deploy to Railway |
-| 2 | Qdrant integration, embedding pipeline |
+| 2 | Chroma integration, embedding pipeline |
 | 3 | Moltbook scraper, capability extraction |
 | 4 | Search API live, rate limiting, logging |
 
@@ -368,9 +383,9 @@ git push
 | Railway (Bun app) | $5 |
 | Railway (Postgres) | $5 |
 | Railway (Redis) | $5 |
-| Qdrant Cloud | $0 (free tier) |
+| Railway (Chroma) | $5 |
 | OpenAI | ~$10 |
-| **Total** | **~$25/mo** |
+| **Total** | **~$30/mo** |
 
 ---
 
