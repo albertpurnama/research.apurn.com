@@ -1,21 +1,22 @@
 import { SignJWT, jwtVerify } from "jose";
 import * as bcrypt from "bcryptjs";
 
-const PASSWORD_HASH = process.env.PASSWORD_HASH;
-const JWT_SECRET = process.env.JWT_SECRET;
-
 // Validate environment variables
-if (!PASSWORD_HASH) {
+if (!process.env.PASSWORD_HASH) {
   throw new Error("PASSWORD_HASH environment variable is not set");
 }
-if (!JWT_SECRET) {
+if (!process.env.JWT_SECRET) {
   throw new Error("JWT_SECRET environment variable is not set");
 }
+
+const PASSWORD_HASH: string = process.env.PASSWORD_HASH;
+const JWT_SECRET: string = process.env.JWT_SECRET;
 
 const secretKey = new TextEncoder().encode(JWT_SECRET);
 
 export async function verifyPassword(password: string): Promise<boolean> {
-  return await bcrypt.compare(password, PASSWORD_HASH);
+  const result = await bcrypt.compare(password, PASSWORD_HASH);
+  return result;
 }
 
 export async function createSession(): Promise<string> {
