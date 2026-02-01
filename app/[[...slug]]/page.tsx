@@ -3,6 +3,7 @@ import path from "node:path";
 import matter from "gray-matter";
 import { BookOpen, FileText, Search } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface FileInfo {
 	relativePath: string;
@@ -228,6 +229,7 @@ export default async function Page({
 				</h1>
 				<div className="max-w-none">
 					<ReactMarkdown
+						remarkPlugins={[remarkGfm]}
 						components={{
 							h1: ({ node, ...props }) => (
 								<h1
