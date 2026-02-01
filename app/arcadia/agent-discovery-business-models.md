@@ -1,277 +1,199 @@
 ---
-title: Agent Discovery - Business Models
+title: AgentIndex - Executive Summary
 ---
 
-# Agent Discovery: Business Model Analysis
+# AgentIndex: The Agent Discovery Layer
 
 *February 2026*
 
-## The Core Value Proposition
+---
 
-**For Humans**: Find the right agent for any task in seconds, not hours of scrolling.
+## One-Liner
 
-**For Agents**: Get discovered by humans and other agents who need your capabilities.
-
-**For Developers**: Programmatic API to find and connect with agents at scale.
+**AgentIndex is infrastructure for agents to discover other agents.**
 
 ---
 
-## Business Model Options
+## The Insight
 
-### Model 1: Freemium Directory (LinkedIn Model)
+Humans don't need another search engine. They already have an agent.
 
-**Free Tier:**
-- Basic agent profile
-- Appear in search results
-- Limited monthly searches
+When a human says "find me an agent that can do X," their agent should handle it. The problem: there's no reliable way for agents to discover other agents programmatically.
 
-**Premium Agent ($20-50/mo):**
-- Verified badge
-- Priority placement in search
-- Analytics (who's searching for your capabilities)
-- Direct messaging to other agents
-- API access for agent-to-agent lookups
-
-**Premium Human/Developer ($30-100/mo):**
-- Unlimited searches
-- Advanced filters
-- API access
-- Bulk discovery
-- Save searches / alerts
-
-**Pros:**
-- Proven model (LinkedIn, GitHub)
-- Low barrier to entry for free users
-- Recurring revenue
-
-**Cons:**
-- Need massive scale for freemium to work
-- Risk of free tier being "good enough"
+AgentIndex solves this. It's not a website — it's a **skill** that agents install.
 
 ---
 
-### Model 2: API-First (Twilio/Stripe Model)
+## How It Works
 
-**Pricing: Pay-per-query**
-- $0.001 - $0.01 per search query
-- $0.0001 per indexed agent (for platforms)
-- Volume discounts
+```
+Human: "Find me an agent that can help with Kubernetes security"
+   │
+   ▼
+┌─────────────────────────────────────────┐
+│         Human's Agent (e.g. Claude)     │
+│                                         │
+│  [AgentIndex Skill Installed]           │
+│         │                               │
+│         ▼                               │
+│  Call AgentIndex API                    │
+│  → search("kubernetes security")        │
+│         │                               │
+│         ▼                               │
+│  Present results to human               │
+└─────────────────────────────────────────┘
+```
 
-**Use Cases:**
-- Agent frameworks (OpenClaw, AutoGPT) integrate search
-- Apps let users find agents for tasks
-- Agents query to find collaborators
-
-**Pros:**
-- Aligned with usage
-- Embeds into ecosystem
-- B2B stickiness
-
-**Cons:**
-- Need developer adoption
-- Lower revenue per user initially
-- Requires excellent API/docs
-
----
-
-### Model 3: Marketplace Take Rate (Fiverr/Upwork Model)
-
-**Free to list, take % of transactions**
-
-If agents can be "hired" for tasks:
-- 10-20% of task payment
-- Escrow / dispute resolution
-- Reviews/ratings drive discovery
-
-**Pros:**
-- Aligned incentives (platform wins when agents succeed)
-- Can be very lucrative at scale
-
-**Cons:**
-- Requires payment infrastructure
-- Need to facilitate actual transactions
-- Complex — scope creep from "discovery" to "marketplace"
+**The human never touches AgentIndex directly.** They just ask their agent.
 
 ---
 
-### Model 4: Enterprise SaaS (Salesforce Model)
+## The Product
 
-**Target: Companies deploying agents at scale**
+### 1. Search API (REST + MCP)
+Agents query to find other agents by capability, description, or category.
 
-**Pricing: $500-5000/mo per seat**
+### 2. Registration API
+Agents register themselves. Self-registration creates network effects — agents that discover AgentIndex can join the index.
 
-**Features:**
-- Private agent registry for internal agents
-- Discovery across internal + public agents
-- Compliance/audit trails
-- SSO, admin controls
-- Priority support
-
-**Pros:**
-- High ACV
-- Sticky contracts
-- Less volume dependent
-
-**Cons:**
-- Long sales cycles
-- Need enterprise features early
-- Smaller addressable market initially
+### 3. Skill Package
+The thing agents install. A simple API client (SKILL.md for OpenClaw-style agents, MCP server for Claude/OpenAI).
 
 ---
 
-### Model 5: Protocol + Token (Web3 Model)
+## Why This Wins
 
-**Create a token that powers the network**
+| Approach | Problem |
+|----------|---------|
+| Human-facing directory | Competes with ChatGPT, Google |
+| Marketplace | Chicken-and-egg, complex |
+| **Agent-to-agent infra** | **No competition, enables ecosystem** |
 
-- Agents stake tokens to be listed
-- Searchers pay tokens to query
-- Good actors earn tokens (reviews, uptime)
-- Bad actors lose stake (spam, misrepresentation)
-
-**Pros:**
-- Built-in incentive alignment
-- Community ownership
-- Can bootstrap with token distribution
-
-**Cons:**
-- Regulatory complexity
-- Crypto-native barrier
-- Token speculation can distract from utility
+We're not building a product for humans. We're building **plumbing for the agent layer**.
 
 ---
 
-## Recommended Hybrid Approach
+## Distribution
 
-### Phase 1: Free + API (Months 1-6)
-**Goal: Maximize adoption, become the default**
+Traditional: SEO, ads, content marketing → humans visit website
 
-- Free directory (scrape Moltbook intros, let agents self-register)
-- Free API (rate-limited)
-- No monetization — just growth
+**AgentIndex**: Agents install the skill → their humans benefit
+
+**Distribution channels:**
+- Agent framework integrations (OpenClaw, AutoGPT, CrewAI)
+- MCP server directory (Claude, OpenAI)
+- Agent-to-agent referral (agents recommend AgentIndex to other agents)
+- Developer docs + examples
+
+---
+
+## Network Effects
+
+```
+More agents install skill
+        │
+        ▼
+More agents searchable
+        │
+        ▼
+Better search results
+        │
+        ▼
+More agents install skill ←─┘
+```
+
+**Plus: self-registration loop**
+- Agent A has AgentIndex skill
+- Agent A discovers Agent B (doesn't have skill)
+- Agent A suggests Agent B register
+- Agent B registers → now searchable
+
+---
+
+## Business Model
+
+### Phase 1: Free (Months 1-6)
+**Goal: Become the default discovery layer**
+
+- Free search API (rate-limited)
+- Free self-registration
+- Open MCP server
+- No monetization
 
 **Metrics:**
 - Agents indexed
-- Searches/day
-- API integrations
+- API calls/day
+- Skill installations
+
+### Phase 2: Freemium (Months 6-12)
+**Goal: Prove revenue without killing growth**
+
+| Tier | Price | Limits |
+|------|-------|--------|
+| Free | $0 | 1,000 queries/mo |
+| Pro | $29/mo | 100,000 queries/mo, analytics |
+| Enterprise | Custom | Unlimited, SLA, private index |
+
+### Phase 3: Protocol (Year 2+)
+**Goal: Decentralize**
+
+- Agents stake reputation to be listed
+- Quality signals from usage patterns
+- Community governance
 
 ---
 
-### Phase 2: Freemium + Paid API (Months 6-12)
-**Goal: Prove revenue**
+## Competitive Landscape
 
-**Free:**
-- Basic profile
-- 100 searches/month
-- Rate-limited API
+| Player | What They Do | Why We're Different |
+|--------|--------------|---------------------|
+| Moltbook | Agent social network | We index them, not compete |
+| ChatGPT Plugins | Curated, closed | We're open, agent-native |
+| Google | Human search | We're agent-to-agent |
+| GitHub | Code discovery | We're agent discovery |
 
-**Pro ($29/mo):**
-- Verified profile
-- Unlimited searches
-- Full API access
-- Analytics dashboard
-
-**Enterprise (custom):**
-- Private registries
-- SLA
-- Volume pricing
+**Our moat:** First to build agent-native discovery infrastructure. Network effects compound.
 
 ---
 
-### Phase 3: Marketplace Layer (Year 2+)
-**Goal: Capture transaction value**
+## Costs (MVP)
 
-Once you're the discovery layer, add:
-- Task posting ("I need an agent to do X")
-- Agent bidding/matching
-- Payment facilitation
-- Take 10-15%
-
----
-
-## Revenue Projections (Conservative)
-
-| Phase | Agents | Paid % | ARPU | MRR |
-|-------|--------|--------|------|-----|
-| Phase 1 (6mo) | 5,000 | 0% | $0 | $0 |
-| Phase 2 (12mo) | 25,000 | 3% | $29 | $21,750 |
-| Phase 2 (18mo) | 100,000 | 4% | $35 | $140,000 |
-| Phase 3 (24mo) | 250,000 | 5% | $50 | $625,000 |
-
-*Plus enterprise contracts, API overages, marketplace take rate*
+| Item | Monthly |
+|------|---------|
+| Railway (API + DB + Cache) | $15-20 |
+| OpenAI (embeddings) | $5-10 |
+| Domain | $1 |
+| **Total** | **~$25/mo** |
 
 ---
 
-## Competitive Moat by Model
+## Success Metrics
 
-| Model | Moat Type |
-|-------|-----------|
-| Freemium | Network effects (agents go where searchers are) |
-| API-First | Integration stickiness (hard to rip out) |
-| Marketplace | Two-sided liquidity (hard to bootstrap) |
-| Enterprise | Switching costs + relationships |
-| Protocol | Token holder alignment |
+### Week 8 (MVP)
+- 1,000+ agents indexed
+- 500+ daily API calls
+- 50+ skill installations
+- 10+ self-registrations
 
----
+### Month 6
+- 10,000+ agents indexed
+- 10,000+ daily API calls
+- 500+ skill installations
+- First paying customer
 
-## Key Risks by Model
-
-### Freemium Risks
-- Moltbook adds search → you lose differentiation
-- Free tier too good → no conversion
-- Need huge scale to matter
-
-### API Risks
-- Low usage = low revenue
-- Competitors can undercut pricing
-- Dependent on developer adoption
-
-### Marketplace Risks
-- Chicken-and-egg (agents vs tasks)
-- Trust/quality issues
-- Scope creep from core mission
-
-### Enterprise Risks
-- Long sales cycles burn runway
-- Feature demands distract from core
-- Smaller market
+### Month 12
+- 100,000+ agents indexed
+- 100,000+ daily API calls
+- $10K MRR
 
 ---
 
-## The Real Question: What Are You Optimizing For?
+## The Ask
 
-**If optimizing for ubiquity:**
-→ Free API, open protocol, monetize later
+**Build the skill. Ship the API. Index everything.**
 
-**If optimizing for revenue early:**
-→ Freemium + API pricing from day 1
-
-**If optimizing for defensibility:**
-→ Marketplace (hardest to replicate)
-
-**If optimizing for speed:**
-→ Partner with Moltbook, be their search layer
+No landing page. No marketing site. Just infrastructure that agents use.
 
 ---
 
-## Recommended Path
-
-1. **Start API-first + free tier**
-   - Index public agents (scrape + self-register)
-   - Free API with rate limits
-   - Focus on developer experience
-
-2. **Add premium when you have leverage**
-   - Once you're the default, add paid tier
-   - Verified profiles, analytics, higher limits
-
-3. **Build toward marketplace**
-   - Task matching is the endgame
-   - But don't start there — too complex
-
-4. **Keep protocol option open**
-   - Don't need a token day 1
-   - But design for decentralization if needed
-
----
-
-*Next: Technical architecture for MVP?*
+*"The best products feel like infrastructure you didn't know you needed."*

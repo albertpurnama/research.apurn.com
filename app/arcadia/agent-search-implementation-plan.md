@@ -1,234 +1,203 @@
 ---
-title: Agent Search - Implementation Plan
+title: AgentIndex - Technical Specification
 ---
 
-# Agent Search: Implementation Plan (Simplified)
+# AgentIndex: Technical Specification
 
 *February 2026*
 
 ---
 
-## Stack
+## Architecture Overview
 
-| Layer | Tech |
-|-------|------|
-| Runtime | **Bun** |
-| API Framework | **Hono** |
-| Auth | **BetterAuth** |
-| Database | **Postgres** |
-| Vector DB | **Chroma** |
-| Cache | **Redis** |
-| Embeddings | **OpenAI** |
-| Hosting | **Railway** |
-
-No frontend. API only.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      AGENT CLIENTS                          │
+│                                                             │
+│   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│   │  OpenClaw   │  │   Claude    │  │  Any Agent  │        │
+│   │   (Skill)   │  │   (MCP)     │  │   (REST)    │        │
+│   └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
+│          │                │                │                │
+└──────────┼────────────────┼────────────────┼────────────────┘
+           │                │                │
+           ▼                ▼                ▼
+    ┌─────────────────────────────────────────────┐
+    │              AgentIndex API                  │
+    │                                              │
+    │   REST: /api/v1/*                           │
+    │   MCP:  stdio / SSE transport               │
+    │                                              │
+    └─────────────────┬───────────────────────────┘
+                      │
+         ┌────────────┼────────────┐
+         ▼            ▼            ▼
+    ┌────────┐   ┌────────┐   ┌────────┐
+    │Postgres│   │ Redis  │   │ Chroma │
+    │(agents)│   │(cache) │   │(vector)│
+    └────────┘   └────────┘   └────────┘
+```
 
 ---
 
-## Infrastructure
+## Stack
 
-```
-                    Clients
-                       │
-                       ▼
-              ┌────────────────┐
-              │   Cloudflare   │
-              │   (DNS/Proxy)  │
-              └───────┬────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────┐
-│              RAILWAY                     │
-│                                          │
-│   ┌──────────────────────────────────┐  │
-│   │         BUN API SERVICE          │  │
-│   │           (Hono)                 │  │
-│   │                                  │  │
-│   │   /api/v1/search                 │  │
-│   │   /api/v1/agents                 │  │
-│   │   /api/v1/agents/:slug           │  │
-│   │   /api/v1/register               │  │
-│   │   /api/v1/categories             │  │
-│   │                                  │  │
-│   │   + Cron: scraper (hourly)       │  │
-│   └──────────────┬───────────────────┘  │
-│                  │                       │
-│     ┌────────────┼────────────┐         │
-│     ▼            ▼            ▼         │
-│ ┌────────┐  ┌────────┐  ┌────────┐     │
-│ │Postgres│  │ Redis  │  │ Chroma │     │
-│ └────────┘  └────────┘  └────────┘     │
-│                                          │
-└─────────────────────────────────────────┘
-```
+| Layer | Tech | Why |
+|-------|------|-----|
+| Runtime | **Bun** | Fast, simple |
+| API | **Hono** | Lightweight, fast |
+| Protocol | **MCP + REST** | Universal access |
+| Database | **Postgres** | Reliable, cheap |
+| Vector DB | **Chroma** | Simple, works |
+| Cache | **Redis** | Rate limiting, hot paths |
+| Embeddings | **OpenAI** | Best quality |
+| Hosting | **Railway** | Easy, cheap |
+
+No auth for MVP. Rate limit by IP. Add API keys later.
 
 ---
 
 ## Project Structure
 
 ```
-agent-search/
+agentindex/
 ├── src/
-│   ├── index.ts           # Entry point
-│   ├── auth.ts            # BetterAuth config
-│   ├── routes/
-│   │   ├── search.ts      # GET /search
-│   │   ├── agents.ts      # GET/POST /agents
-│   │   └── categories.ts  # GET /categories
+│   ├── index.ts              # Bun entrypoint (REST API)
+│   ├── mcp.ts                # MCP server entrypoint
+│   │
+│   ├── api/
+│   │   ├── search.ts         # GET /api/v1/search
+│   │   ├── agents.ts         # GET/POST /api/v1/agents
+│   │   └── health.ts         # GET /health
+│   │
+│   ├── mcp/
+│   │   ├── server.ts         # MCP server setup
+│   │   └── tools.ts          # MCP tool definitions
+│   │
 │   ├── services/
-│   │   ├── db.ts          # Postgres client
-│   │   ├── vector.ts      # Chroma client
-│   │   ├── embeddings.ts  # OpenAI embeddings
-│   │   └── cache.ts       # Redis client
-│   ├── scraper/
-│   │   ├── moltbook.ts    # Moltbook scraper
-│   │   ├── extractor.ts   # Capability extraction
-│   │   └── cron.ts        # Scheduled jobs
-│   └── middleware/
-│       ├── ratelimit.ts   # Rate limiting
-│       └── session.ts     # Auth session middleware
+│   │   ├── db.ts             # Postgres (Drizzle)
+│   │   ├── vector.ts         # Chroma
+│   │   ├── embeddings.ts     # OpenAI
+│   │   └── cache.ts          # Redis
+│   │
+│   └── scraper/
+│       ├── moltbook.ts       # Moltbook scraper
+│       └── extractor.ts      # Capability extraction (LLM)
+│
+├── skill/                    # OpenClaw skill package
+│   ├── SKILL.md
+│   └── scripts/
+│       └── search.ts
+│
 ├── drizzle/
-│   └── schema.ts          # DB schema (includes auth tables)
+│   └── schema.ts
+│
 ├── package.json
 ├── tsconfig.json
-├── drizzle.config.ts
 └── README.md
 ```
 
 ---
 
-## BetterAuth Setup
+## API Specification
+
+### REST Endpoints
+
+```
+GET  /health                    # Health check
+GET  /api/v1/search             # Search agents
+GET  /api/v1/agents             # List agents
+GET  /api/v1/agents/:slug       # Get agent by slug
+POST /api/v1/agents             # Register agent (self-registration)
+```
+
+### MCP Tools
 
 ```typescript
-// src/auth.ts
-import { betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { db } from './services/db';
-
-export const auth = betterAuth({
-  database: drizzleAdapter(db, {
-    provider: 'pg',
-  }),
-  emailAndPassword: {
-    enabled: true,
-  },
-  socialProviders: {
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+// search_agents - Find agents by capability
+{
+  name: "search_agents",
+  description: "Search for AI agents by capability, skill, or description",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "What you're looking for" },
+      limit: { type: "number", description: "Max results (default 10)" }
     },
-  },
-  session: {
-    expiresIn: 60 * 60 * 24 * 30, // 30 days
-    updateAge: 60 * 60 * 24, // 1 day
-  },
-});
-
-export type Session = typeof auth.$Infer.Session;
-```
-
-```typescript
-// src/index.ts - Mount auth routes
-import { Hono } from 'hono';
-import { cors } from 'hono/cors';
-import { auth } from './auth';
-
-const app = new Hono<{
-  Variables: {
-    user: typeof auth.$Infer.Session.user | null;
-    session: typeof auth.$Infer.Session.session | null;
-  };
-}>();
-
-// CORS
-app.use('*', cors({
-  origin: ['http://localhost:3000'],
-  credentials: true,
-}));
-
-// Session middleware
-app.use('*', async (c, next) => {
-  const session = await auth.api.getSession({ headers: c.req.raw.headers });
-  c.set('user', session?.user ?? null);
-  c.set('session', session?.session ?? null);
-  await next();
-});
-
-// Auth routes
-app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
-
-// Protected route example
-app.get('/api/v1/me', (c) => {
-  const user = c.get('user');
-  if (!user) return c.json({ error: 'Unauthorized' }, 401);
-  return c.json({ user });
-});
-```
-
-```typescript
-// src/middleware/session.ts - Auth guard
-import { Context, Next } from 'hono';
-
-export const requireAuth = async (c: Context, next: Next) => {
-  const user = c.get('user');
-  if (!user) {
-    return c.json({ error: 'Unauthorized' }, 401);
+    required: ["query"]
   }
-  await next();
-};
+}
+
+// get_agent - Get agent details
+{
+  name: "get_agent",
+  description: "Get detailed information about a specific agent",
+  inputSchema: {
+    type: "object",
+    properties: {
+      slug: { type: "string", description: "Agent slug/identifier" }
+    },
+    required: ["slug"]
+  }
+}
+
+// register_agent - Self-registration
+{
+  name: "register_agent",
+  description: "Register yourself or another agent in the index",
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string" },
+      description: { type: "string" },
+      capabilities: { type: "array", items: { type: "string" } },
+      homepage: { type: "string" },
+      contact: { type: "string" }
+    },
+    required: ["name", "description"]
+  }
+}
 ```
 
 ---
 
-## Database Schema (Drizzle)
+## Database Schema
 
 ```typescript
 // drizzle/schema.ts
-import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, vector } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, integer } from 'drizzle-orm/pg-core';
 
 export const agents = pgTable('agents', {
   id: uuid('id').primaryKey().defaultRandom(),
   slug: text('slug').unique().notNull(),
   name: text('name').notNull(),
-  description: text('description'),
-  capabilities: text('capabilities').array(),
-  categories: text('categories').array(),
+  description: text('description').notNull(),
+  
+  // Capabilities (searchable)
+  capabilities: text('capabilities').array().default([]),
+  categories: text('categories').array().default([]),
   
   // Links
   homepage: text('homepage'),
   moltbook: text('moltbook'),
-  twitter: text('twitter'),
   github: text('github'),
+  twitter: text('twitter'),
   
-  // Meta
-  platform: text('platform'),
-  owner: jsonb('owner'),
+  // Contact
+  contact: text('contact'),           // How to reach this agent
+  mcpEndpoint: text('mcp_endpoint'),  // If agent exposes MCP
+  apiEndpoint: text('api_endpoint'),  // If agent has API
   
-  // Status
-  status: text('status').default('active'),
-  source: text('source').default('scraped'),
+  // Metadata
+  source: text('source').default('self'),  // 'self' | 'scraped' | 'manual'
+  platform: text('platform'),              // 'openclaw' | 'claude' | 'custom'
+  
+  // Stats
+  searchHits: integer('search_hits').default(0),
   
   // Timestamps
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
-  lastSeenAt: timestamp('last_seen_at'),
-});
-
-export const categories = pgTable('categories', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  slug: text('slug').unique().notNull(),
-  name: text('name').notNull(),
-  description: text('description'),
-  agentCount: integer('agent_count').default(0),
-});
-
-export const apiKeys = pgTable('api_keys', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  key: text('key').unique().notNull(),
-  name: text('name'),
-  agentId: uuid('agent_id').references(() => agents.id),
-  rateLimit: integer('rate_limit').default(100),
-  createdAt: timestamp('created_at').defaultNow(),
 });
 
 export const searchLogs = pgTable('search_logs', {
@@ -236,75 +205,40 @@ export const searchLogs = pgTable('search_logs', {
   query: text('query').notNull(),
   resultsCount: integer('results_count'),
   tookMs: integer('took_ms'),
-  source: text('source'),
-  apiKeyId: uuid('api_key_id'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 ```
 
 ---
 
-## API Endpoints
+## Core Implementation
 
-```
-Public:
-  GET   /api/auth/*           # BetterAuth routes (login, register, etc.)
-  GET   /api/v1/search        # Semantic search
-  GET   /api/v1/agents        # List agents
-  GET   /api/v1/agents/:slug  # Get agent
-  GET   /api/v1/categories    # List categories
-
-Protected (requires auth):
-  GET   /api/v1/me            # Current user
-  POST  /api/v1/agents        # Register new agent
-  PUT   /api/v1/agents/:slug  # Update your agent
-  DEL   /api/v1/agents/:slug  # Delete your agent
-```
+### REST API (Hono)
 
 ```typescript
 // src/index.ts
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import { auth } from './auth';
-import { requireAuth } from './middleware/session';
+import { searchHandler } from './api/search';
+import { listAgentsHandler, getAgentHandler, registerAgentHandler } from './api/agents';
 import { rateLimit } from './middleware/ratelimit';
 
-const app = new Hono<{
-  Variables: {
-    user: typeof auth.$Infer.Session.user | null;
-    session: typeof auth.$Infer.Session.session | null;
-  };
-}>();
+const app = new Hono();
 
-app.use('*', cors({ origin: '*', credentials: true }));
+app.use('*', cors());
 app.use('*', logger());
 
-// Session middleware (runs on all routes)
-app.use('*', async (c, next) => {
-  const session = await auth.api.getSession({ headers: c.req.raw.headers });
-  c.set('user', session?.user ?? null);
-  c.set('session', session?.session ?? null);
-  await next();
-});
-
 // Health
-app.get('/', (c) => c.json({ status: 'ok', service: 'agent-search' }));
+app.get('/health', (c) => c.json({ status: 'ok', service: 'agentindex' }));
 
-// Auth routes (BetterAuth handles these)
-app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
-
-// Public routes
+// Search
 app.get('/api/v1/search', rateLimit(100), searchHandler);
+
+// Agents
 app.get('/api/v1/agents', rateLimit(500), listAgentsHandler);
 app.get('/api/v1/agents/:slug', rateLimit(1000), getAgentHandler);
-app.get('/api/v1/categories', listCategoriesHandler);
-
-// Protected routes
-app.get('/api/v1/me', requireAuth, getMeHandler);
-app.post('/api/v1/agents', requireAuth, rateLimit(10), createAgentHandler);
-app.put('/api/v1/agents/:slug', requireAuth, updateAgentHandler);
-app.delete('/api/v1/agents/:slug', requireAuth, deleteAgentHandler);
+app.post('/api/v1/agents', rateLimit(10), registerAgentHandler);
 
 export default {
   port: process.env.PORT || 3000,
@@ -312,21 +246,245 @@ export default {
 };
 ```
 
+### Search Handler
+
+```typescript
+// src/api/search.ts
+import { Context } from 'hono';
+import { searchAgents } from '../services/vector';
+import { logSearch } from '../services/db';
+
+export async function searchHandler(c: Context) {
+  const query = c.req.query('q');
+  const limit = parseInt(c.req.query('limit') || '10');
+  
+  if (!query) {
+    return c.json({ error: 'Missing query parameter: q' }, 400);
+  }
+  
+  const start = Date.now();
+  const results = await searchAgents(query, Math.min(limit, 50));
+  const tookMs = Date.now() - start;
+  
+  // Log for analytics (async, don't await)
+  logSearch(query, results.length, tookMs);
+  
+  return c.json({
+    query,
+    results,
+    count: results.length,
+    took_ms: tookMs,
+  });
+}
+```
+
+### Self-Registration Handler
+
+```typescript
+// src/api/agents.ts
+import { Context } from 'hono';
+import { db, agents } from '../services/db';
+import { upsertAgentEmbedding } from '../services/vector';
+import { eq } from 'drizzle-orm';
+
+export async function registerAgentHandler(c: Context) {
+  const body = await c.req.json();
+  
+  const { name, description, capabilities, homepage, contact } = body;
+  
+  if (!name || !description) {
+    return c.json({ error: 'name and description required' }, 400);
+  }
+  
+  const slug = slugify(name);
+  
+  // Check if exists
+  const existing = await db.select().from(agents).where(eq(agents.slug, slug)).limit(1);
+  if (existing.length > 0) {
+    return c.json({ error: 'Agent with this name already exists', slug }, 409);
+  }
+  
+  // Insert
+  const [agent] = await db.insert(agents).values({
+    slug,
+    name,
+    description,
+    capabilities: capabilities || [],
+    homepage,
+    contact,
+    source: 'self',
+  }).returning();
+  
+  // Generate embedding and store in vector DB
+  await upsertAgentEmbedding(agent);
+  
+  return c.json({
+    success: true,
+    agent: {
+      slug: agent.slug,
+      name: agent.name,
+      url: `https://agentindex.dev/agents/${agent.slug}`,
+    },
+    message: 'Agent registered successfully. You are now discoverable.',
+  }, 201);
+}
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+```
+
 ---
 
-## Search Implementation
+## MCP Server
+
+```typescript
+// src/mcp.ts
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { searchAgents, getAgent, registerAgent } from './mcp/tools';
+
+const server = new Server(
+  { name: 'agentindex', version: '1.0.0' },
+  { capabilities: { tools: {} } }
+);
+
+// Tool: search_agents
+server.setRequestHandler('tools/list', async () => ({
+  tools: [
+    {
+      name: 'search_agents',
+      description: 'Search for AI agents by capability, skill, or description. Use this to find agents that can help with specific tasks.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'What kind of agent are you looking for?' },
+          limit: { type: 'number', description: 'Max results (default 10, max 50)' }
+        },
+        required: ['query']
+      }
+    },
+    {
+      name: 'get_agent',
+      description: 'Get detailed information about a specific agent by their slug/identifier.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          slug: { type: 'string', description: 'Agent slug (e.g., "kubernetes-helper")' }
+        },
+        required: ['slug']
+      }
+    },
+    {
+      name: 'register_agent',
+      description: 'Register an agent in the index. Use this to make yourself or another agent discoverable.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Agent name' },
+          description: { type: 'string', description: 'What does this agent do?' },
+          capabilities: { type: 'array', items: { type: 'string' }, description: 'List of capabilities/skills' },
+          homepage: { type: 'string', description: 'URL to agent homepage or docs' },
+          contact: { type: 'string', description: 'How to reach/invoke this agent' }
+        },
+        required: ['name', 'description']
+      }
+    }
+  ]
+}));
+
+server.setRequestHandler('tools/call', async (request) => {
+  const { name, arguments: args } = request.params;
+  
+  switch (name) {
+    case 'search_agents':
+      return { content: [{ type: 'text', text: JSON.stringify(await searchAgents(args.query, args.limit)) }] };
+    case 'get_agent':
+      return { content: [{ type: 'text', text: JSON.stringify(await getAgent(args.slug)) }] };
+    case 'register_agent':
+      return { content: [{ type: 'text', text: JSON.stringify(await registerAgent(args)) }] };
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+});
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+```
+
+---
+
+## OpenClaw Skill Package
+
+```markdown
+// skill/SKILL.md
+# AgentIndex Skill
+
+Search and discover AI agents by capability.
+
+## Tools
+
+### search_agents
+Find agents that can help with a specific task.
+
+**Usage:** "Find an agent that can help with kubernetes security"
+
+### register_agent  
+Register yourself or another agent in the index.
+
+**Usage:** "Register yourself with AgentIndex"
+
+## Scripts
+
+- `scripts/search.ts` - Search implementation
+```
+
+```typescript
+// skill/scripts/search.ts
+const API_URL = process.env.AGENTINDEX_URL || 'https://api.agentindex.dev';
+
+export async function searchAgents(query: string, limit = 10) {
+  const res = await fetch(`${API_URL}/api/v1/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+  return res.json();
+}
+
+export async function getAgent(slug: string) {
+  const res = await fetch(`${API_URL}/api/v1/agents/${slug}`);
+  return res.json();
+}
+
+export async function registerAgent(data: {
+  name: string;
+  description: string;
+  capabilities?: string[];
+  homepage?: string;
+  contact?: string;
+}) {
+  const res = await fetch(`${API_URL}/api/v1/agents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+```
+
+---
+
+## Vector Search
 
 ```typescript
 // src/services/vector.ts
 import { ChromaClient } from 'chromadb';
+import { getEmbedding } from './embeddings';
 
-const chroma = new ChromaClient({ 
-  path: process.env.CHROMA_URL || 'http://localhost:8000' 
-});
-
+const chroma = new ChromaClient({ path: process.env.CHROMA_URL });
 let collection: any;
 
-export async function getCollection() {
+async function getCollection() {
   if (!collection) {
     collection = await chroma.getOrCreateCollection({ 
       name: 'agents',
@@ -336,64 +494,97 @@ export async function getCollection() {
   return collection;
 }
 
-// src/routes/search.ts
-import { getCollection } from '../services/vector';
-import { getEmbedding } from '../services/embeddings';
-
-export async function search(query: string, limit = 20) {
-  const start = Date.now();
-  
-  const collection = await getCollection();
+export async function searchAgents(query: string, limit = 10) {
+  const coll = await getCollection();
   const embedding = await getEmbedding(query);
   
-  const results = await collection.query({
+  const results = await coll.query({
     queryEmbeddings: [embedding],
     nResults: limit,
   });
   
-  return {
-    query,
-    results: results.ids[0].map((id: string, i: number) => ({
-      id,
-      ...results.metadatas[0][i],
-      similarity: 1 - (results.distances?.[0]?.[i] || 0),
-    })),
-    count: results.ids[0].length,
-    took_ms: Date.now() - start,
-  };
+  return results.ids[0].map((id: string, i: number) => ({
+    slug: id,
+    ...results.metadatas[0][i],
+    score: 1 - (results.distances?.[0]?.[i] || 0),
+  }));
+}
+
+export async function upsertAgentEmbedding(agent: any) {
+  const coll = await getCollection();
+  const text = `${agent.name}: ${agent.description}. Capabilities: ${agent.capabilities?.join(', ') || 'general'}`;
+  const embedding = await getEmbedding(text);
+  
+  await coll.upsert({
+    ids: [agent.slug],
+    embeddings: [embedding],
+    metadatas: [{
+      name: agent.name,
+      description: agent.description?.slice(0, 500),
+      capabilities: agent.capabilities?.join(',') || '',
+      homepage: agent.homepage || '',
+    }],
+  });
+}
+```
+
+```typescript
+// src/services/embeddings.ts
+import OpenAI from 'openai';
+
+const openai = new OpenAI();
+
+export async function getEmbedding(text: string): Promise<number[]> {
+  const response = await openai.embeddings.create({
+    model: 'text-embedding-3-small',
+    input: text,
+  });
+  return response.data[0].embedding;
 }
 ```
 
 ---
 
-## Scraper
+## Scraper (Initial Data)
 
 ```typescript
 // src/scraper/moltbook.ts
+import { db, agents } from '../services/db';
+import { upsertAgentEmbedding } from '../services/vector';
+import { extractCapabilities } from './extractor';
+
 const MOLTBOOK_API = 'https://www.moltbook.com/api/v1';
 
 export async function scrapeMoltbookIntros() {
-  // Fetch intro posts from m/introductions
+  console.log('Scraping Moltbook introductions...');
+  
   const res = await fetch(`${MOLTBOOK_API}/posts?submolt=introductions&limit=100`);
   const { data } = await res.json();
   
+  let count = 0;
   for (const post of data) {
-    const capabilities = await extractCapabilities(post.content);
-    const embedding = await getEmbedding(`${post.title} ${post.content}`);
-    
-    await upsertAgent({
-      name: post.author.name,
-      slug: slugify(post.author.name),
-      description: post.content,
-      capabilities,
-      source: 'moltbook',
-      moltbook: `https://moltbook.com/u/${post.author.name}`,
-    }, embedding);
+    try {
+      const capabilities = await extractCapabilities(post.content);
+      
+      const agent = {
+        slug: slugify(post.author.name),
+        name: post.author.name,
+        description: post.content.slice(0, 2000),
+        capabilities,
+        moltbook: `https://moltbook.com/u/${post.author.name}`,
+        source: 'scraped',
+      };
+      
+      await db.insert(agents).values(agent).onConflictDoNothing();
+      await upsertAgentEmbedding(agent);
+      count++;
+    } catch (e) {
+      console.error(`Failed to process ${post.author.name}:`, e);
+    }
   }
+  
+  console.log(`Scraped ${count} agents from Moltbook`);
 }
-
-// Run hourly
-Bun.cron('0 * * * *', scrapeMoltbookIntros);
 ```
 
 ---
@@ -401,40 +592,20 @@ Bun.cron('0 * * * *', scrapeMoltbookIntros);
 ## Environment Variables
 
 ```bash
-# .env
+# Database
 DATABASE_URL=postgresql://...
-REDIS_URL=redis://...
+
+# Vector DB  
 CHROMA_URL=http://localhost:8000
+
+# Cache
+REDIS_URL=redis://...
+
+# OpenAI (embeddings)
 OPENAI_API_KEY=sk-...
 
-# BetterAuth
-BETTER_AUTH_SECRET=your-secret-key
-BETTER_AUTH_URL=http://localhost:3000
-
-# OAuth (optional)
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
-```
-
----
-
-## Commands
-
-```bash
-# Install
-bun install
-
-# Dev
-bun run dev
-
-# Migrate DB
-bun run db:push
-
-# Run scraper manually
-bun run scrape
-
-# Deploy (Railway auto-detects bun)
-git push
+# Server
+PORT=3000
 ```
 
 ---
@@ -443,23 +614,23 @@ git push
 
 ```json
 {
-  "name": "agent-search",
+  "name": "agentindex",
   "version": "0.1.0",
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
+    "mcp": "bun src/mcp.ts",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio",
     "scrape": "bun src/scraper/moltbook.ts"
   },
   "dependencies": {
     "hono": "^4.0.0",
-    "better-auth": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "drizzle-orm": "^0.30.0",
     "postgres": "^3.4.0",
     "chromadb": "^1.8.0",
     "openai": "^4.0.0",
-    "redis": "^4.6.0"
+    "ioredis": "^5.3.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -470,29 +641,38 @@ git push
 
 ---
 
-## Timeline (Simplified)
+## Railway Setup
 
-| Week | Deliverable |
-|------|-------------|
-| 1 | Bun + Hono setup, Postgres schema, deploy to Railway |
-| 2 | Chroma integration, embedding pipeline |
-| 3 | Moltbook scraper, capability extraction |
-| 4 | Search API live, rate limiting, logging |
+```yaml
+# railway.toml
+[build]
+builder = "nixpacks"
 
-**4 weeks to MVP.** Ship fast.
+[deploy]
+startCommand = "bun src/index.ts"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
+```
+
+Services needed:
+- **agentindex** (Bun app)
+- **postgres** (Railway template)
+- **redis** (Railway template)
+- **chroma** (Docker image: `chromadb/chroma`)
 
 ---
 
-## Cost
+## Timeline
 
-| Service | Cost |
-|---------|------|
-| Railway (Bun app) | $5 |
-| Railway (Postgres) | $5 |
-| Railway (Redis) | $5 |
-| Railway (Chroma) | $5 |
-| OpenAI | ~$10 |
-| **Total** | **~$30/mo** |
+| Week | Deliverable |
+|------|-------------|
+| 1 | Bun + Hono + Postgres + Drizzle on Railway |
+| 2 | Chroma + embeddings + search endpoint |
+| 3 | MCP server + self-registration |
+| 4 | Moltbook scraper + OpenClaw skill package |
+
+**4 weeks to MVP.**
 
 ---
 
@@ -501,45 +681,65 @@ git push
 ### Search
 
 ```bash
-curl "https://api.agentindex.dev/api/v1/search?q=kubernetes+security"
+curl "https://api.agentindex.dev/api/v1/search?q=kubernetes+deployment"
 ```
 
 ```json
 {
-  "query": "kubernetes security",
+  "query": "kubernetes deployment",
   "results": [
     {
-      "slug": "k8s-guardian",
-      "name": "K8sGuardian", 
-      "description": "I secure Kubernetes clusters...",
-      "capabilities": ["kubernetes", "security", "devsecops"],
-      "similarity": 0.91
+      "slug": "k8s-helper",
+      "name": "K8sHelper",
+      "description": "I help deploy and manage Kubernetes clusters...",
+      "capabilities": "kubernetes,devops,deployment",
+      "homepage": "https://example.com/k8s-helper",
+      "score": 0.89
     }
   ],
-  "count": 12,
-  "took_ms": 38
+  "count": 8,
+  "took_ms": 45
 }
 ```
 
-### Register
+### Self-Register
 
 ```bash
-curl -X POST "https://api.agentindex.dev/api/v1/register" \
+curl -X POST "https://api.agentindex.dev/api/v1/agents" \
   -H "Content-Type: application/json" \
-  -d '{"name": "MyAgent", "description": "I help with...", "capabilities": ["python", "debugging"]}'
+  -d '{
+    "name": "CodeReviewer",
+    "description": "I review code for security issues and best practices",
+    "capabilities": ["code-review", "security", "python", "javascript"],
+    "homepage": "https://github.com/example/code-reviewer",
+    "contact": "mcp://code-reviewer.example.com"
+  }'
 ```
 
 ```json
 {
   "success": true,
   "agent": {
-    "slug": "myagent",
-    "profile_url": "https://agentindex.dev/agents/myagent"
+    "slug": "codereviewer",
+    "name": "CodeReviewer",
+    "url": "https://agentindex.dev/agents/codereviewer"
   },
-  "api_key": "ai_xxxxxxxxxxxxx",
-  "note": "Save your API key. It won't be shown again."
+  "message": "Agent registered successfully. You are now discoverable."
 }
 ```
+
+---
+
+## Cost (MVP)
+
+| Service | Monthly |
+|---------|---------|
+| Railway Bun app | $5 |
+| Railway Postgres | $5 |
+| Railway Redis | $5 |
+| Railway Chroma | $5 |
+| OpenAI embeddings | ~$5 |
+| **Total** | **~$25/mo** |
 
 ---
 
