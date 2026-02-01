@@ -13,7 +13,8 @@ title: Agent Search - Implementation Plan
 | Layer | Tech |
 |-------|------|
 | Runtime | **Bun** |
-| API Framework | **Hono** (or Elysia) |
+| API Framework | **Hono** |
+| Auth | **BetterAuth** |
 | Database | **Postgres** |
 | Vector DB | **Chroma** |
 | Cache | **Redis** |
@@ -69,6 +70,7 @@ No frontend. API only.
 agent-search/
 ├── src/
 │   ├── index.ts           # Entry point
+│   ├── auth.ts            # BetterAuth config
 │   ├── routes/
 │   │   ├── search.ts      # GET /search
 │   │   ├── agents.ts      # GET/POST /agents
@@ -82,15 +84,98 @@ agent-search/
 │   │   ├── moltbook.ts    # Moltbook scraper
 │   │   ├── extractor.ts   # Capability extraction
 │   │   └── cron.ts        # Scheduled jobs
-│   └── utils/
+│   └── middleware/
 │       ├── ratelimit.ts   # Rate limiting
-│       └── types.ts       # TypeScript types
+│       └── session.ts     # Auth session middleware
 ├── drizzle/
-│   └── schema.ts          # DB schema
+│   └── schema.ts          # DB schema (includes auth tables)
 ├── package.json
 ├── tsconfig.json
 ├── drizzle.config.ts
 └── README.md
+```
+
+---
+
+## BetterAuth Setup
+
+```typescript
+// src/auth.ts
+import { betterAuth } from 'better-auth';
+import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { db } from './services/db';
+
+export const auth = betterAuth({
+  database: drizzleAdapter(db, {
+    provider: 'pg',
+  }),
+  emailAndPassword: {
+    enabled: true,
+  },
+  socialProviders: {
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID!,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    },
+  },
+  session: {
+    expiresIn: 60 * 60 * 24 * 30, // 30 days
+    updateAge: 60 * 60 * 24, // 1 day
+  },
+});
+
+export type Session = typeof auth.$Infer.Session;
+```
+
+```typescript
+// src/index.ts - Mount auth routes
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { auth } from './auth';
+
+const app = new Hono<{
+  Variables: {
+    user: typeof auth.$Infer.Session.user | null;
+    session: typeof auth.$Infer.Session.session | null;
+  };
+}>();
+
+// CORS
+app.use('*', cors({
+  origin: ['http://localhost:3000'],
+  credentials: true,
+}));
+
+// Session middleware
+app.use('*', async (c, next) => {
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  c.set('user', session?.user ?? null);
+  c.set('session', session?.session ?? null);
+  await next();
+});
+
+// Auth routes
+app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
+
+// Protected route example
+app.get('/api/v1/me', (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  return c.json({ user });
+});
+```
+
+```typescript
+// src/middleware/session.ts - Auth guard
+import { Context, Next } from 'hono';
+
+export const requireAuth = async (c: Context, next: Next) => {
+  const user = c.get('user');
+  if (!user) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  await next();
+};
 ```
 
 ---
@@ -161,52 +246,65 @@ export const searchLogs = pgTable('search_logs', {
 
 ## API Endpoints
 
+```
+Public:
+  GET   /api/auth/*           # BetterAuth routes (login, register, etc.)
+  GET   /api/v1/search        # Semantic search
+  GET   /api/v1/agents        # List agents
+  GET   /api/v1/agents/:slug  # Get agent
+  GET   /api/v1/categories    # List categories
+
+Protected (requires auth):
+  GET   /api/v1/me            # Current user
+  POST  /api/v1/agents        # Register new agent
+  PUT   /api/v1/agents/:slug  # Update your agent
+  DEL   /api/v1/agents/:slug  # Delete your agent
+```
+
 ```typescript
 // src/index.ts
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import { rateLimit } from './utils/ratelimit';
+import { auth } from './auth';
+import { requireAuth } from './middleware/session';
+import { rateLimit } from './middleware/ratelimit';
 
-const app = new Hono();
+const app = new Hono<{
+  Variables: {
+    user: typeof auth.$Infer.Session.user | null;
+    session: typeof auth.$Infer.Session.session | null;
+  };
+}>();
 
-app.use('*', cors());
+app.use('*', cors({ origin: '*', credentials: true }));
 app.use('*', logger());
 
-// Health check
+// Session middleware (runs on all routes)
+app.use('*', async (c, next) => {
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  c.set('user', session?.user ?? null);
+  c.set('session', session?.session ?? null);
+  await next();
+});
+
+// Health
 app.get('/', (c) => c.json({ status: 'ok', service: 'agent-search' }));
 
-// Search
-app.get('/api/v1/search', rateLimit(100), async (c) => {
-  const q = c.req.query('q');
-  const limit = parseInt(c.req.query('limit') || '20');
-  // ... semantic search via Qdrant
-});
+// Auth routes (BetterAuth handles these)
+app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
 
-// List agents
-app.get('/api/v1/agents', rateLimit(500), async (c) => {
-  const category = c.req.query('category');
-  const limit = parseInt(c.req.query('limit') || '50');
-  const offset = parseInt(c.req.query('offset') || '0');
-  // ... fetch from Postgres
-});
+// Public routes
+app.get('/api/v1/search', rateLimit(100), searchHandler);
+app.get('/api/v1/agents', rateLimit(500), listAgentsHandler);
+app.get('/api/v1/agents/:slug', rateLimit(1000), getAgentHandler);
+app.get('/api/v1/categories', listCategoriesHandler);
 
-// Get agent
-app.get('/api/v1/agents/:slug', rateLimit(1000), async (c) => {
-  const slug = c.req.param('slug');
-  // ... fetch single agent
-});
-
-// Register agent
-app.post('/api/v1/register', rateLimit(10), async (c) => {
-  const body = await c.req.json();
-  // ... create agent + return API key
-});
-
-// Categories
-app.get('/api/v1/categories', async (c) => {
-  // ... list categories with counts
-});
+// Protected routes
+app.get('/api/v1/me', requireAuth, getMeHandler);
+app.post('/api/v1/agents', requireAuth, rateLimit(10), createAgentHandler);
+app.put('/api/v1/agents/:slug', requireAuth, updateAgentHandler);
+app.delete('/api/v1/agents/:slug', requireAuth, deleteAgentHandler);
 
 export default {
   port: process.env.PORT || 3000,
@@ -308,6 +406,14 @@ DATABASE_URL=postgresql://...
 REDIS_URL=redis://...
 CHROMA_URL=http://localhost:8000
 OPENAI_API_KEY=sk-...
+
+# BetterAuth
+BETTER_AUTH_SECRET=your-secret-key
+BETTER_AUTH_URL=http://localhost:3000
+
+# OAuth (optional)
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
 ```
 
 ---
@@ -348,6 +454,7 @@ git push
   },
   "dependencies": {
     "hono": "^4.0.0",
+    "better-auth": "^1.0.0",
     "drizzle-orm": "^0.30.0",
     "postgres": "^3.4.0",
     "chromadb": "^1.8.0",
