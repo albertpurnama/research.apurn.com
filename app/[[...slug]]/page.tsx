@@ -148,6 +148,12 @@ function getAllFiles(dir: string, baseDir: string): FileInfo[] {
 export async function generateStaticParams() {
 	const markdownFolder = process.env.MARKDOWN_FOLDER || "app/arcadia";
 	const markdownPath = path.join(process.cwd(), markdownFolder);
+	
+	// Handle missing directory gracefully
+	if (!fs.existsSync(markdownPath)) {
+		return [{ slug: [] }];
+	}
+	
 	let files = getAllFiles(markdownPath, markdownPath);
 
 	// Deduplicate by slug (keep first occurrence)
