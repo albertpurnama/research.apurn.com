@@ -1,0 +1,693 @@
+Title,Description,Priority,Estimate,Labels,Assignee,Parent,Blocked By
+"[Foundation] Enable PostHog SDK globally","Remove the posthog_integration feature flag gate and initialize PostHog SDK globally in the application.
+
+**Acceptance Criteria:**
+- PostHog SDK initialized in apps/client/src/app/layout.tsx
+- Environment variables configured: NEXT_PUBLIC_POSTHOG_KEY, NEXT_PUBLIC_POSTHOG_HOST
+- Debug mode enabled for development environment
+- PostHog loads on all pages without errors
+- Verify PostHog session recording is capturing (check PostHog dashboard)
+
+**Files to modify:**
+- apps/client/src/app/layout.tsx
+- .env.production
+
+**Implementation:**
+```typescript
+import posthog from 'posthog-js'
+
+if (typeof window !== 'undefined') {
+  posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
+    api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
+    loaded: (posthog) => {
+      if (process.env.NODE_ENV === 'development') posthog.debug()
+    },
+    capture_pageview: false,
+    capture_pageleave: true
+  })
+}
+```",P0,2,"infrastructure,analytics,p0",Albert,Phase 1: Foundation,
+"[Foundation] Create PostHog types and event constants","Create TypeScript types for all PostHog events and a centralized constants file to prevent typos and ensure type safety.
+
+**Acceptance Criteria:**
+- Create apps/client/src/lib/analytics/types.ts with event interfaces
+- Create apps/client/src/lib/analytics/events.ts with event name constants
+- Create apps/client/src/lib/analytics/properties.ts with shared property helpers
+- All events have TypeScript interfaces with required properties
+- Event names follow consistent naming convention: entity_action (snake_case)
+- Export barrel file from apps/client/src/lib/analytics/index.ts
+
+**Files to create:**
+- apps/client/src/lib/analytics/types.ts
+- apps/client/src/lib/analytics/events.ts
+- apps/client/src/lib/analytics/properties.ts
+- apps/client/src/lib/analytics/index.ts
+
+**Implementation:**
+```typescript
+// types.ts
+export interface OnboardingStepCompletedEvent {
+  step: 'welcome' | 'domain_analysis' | 'product_setup' | 'prompt_selection' | 'subscription_selection' | 'complete';
+  timeSpent: number;
+  organizationId: string;
+  userId: string;
+}
+
+// events.ts
+export const ANALYTICS_EVENTS = {
+  ONBOARDING_STARTED: 'onboarding_started',
+  ONBOARDING_STEP_COMPLETED: 'onboarding_step_completed',
+  // ... all other events
+} as const;
+```",P0,3,"infrastructure,analytics,types",Albert,Phase 1: Foundation,"[Foundation] Enable PostHog SDK globally"
+"[Foundation] Create PostHog tracking helper functions","Create wrapper functions around PostHog SDK for consistent tracking with error handling, type safety, and organization/user context injection.
+
+**Acceptance Criteria:**
+- Create apps/client/src/lib/analytics/tracker.ts with helper functions
+- trackEvent() function automatically injects organizationId, userId, timestamp
+- identifyUser() function sets user properties on auth
+- setOrganizationContext() function updates organization properties
+- All functions have error handling with silent failures in production
+- Functions log to console in development for debugging
+- Type-safe: accepts event types from previous task
+
+**Files to create:**
+- apps/client/src/lib/analytics/tracker.ts
+
+**Implementation:**
+```typescript
+import posthog from 'posthog-js';
+
+export const trackEvent = <T extends Record<string, any>>(
+  eventName: string,
+  properties: T,
+  session?: Session
+) => {
+  try {
+    const enrichedProperties = {
+      ...properties,
+      organizationId: session?.activeOrganizationId,
+      userId: session?.userId,
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV
+    };
+    posthog.capture(eventName, enrichedProperties);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[Analytics]', eventName, enrichedProperties);
+    }
+  } catch (error) {
+    console.error('[Analytics Error]', error);
+  }
+};
+```",P0,3,"infrastructure,analytics,utilities",Albert,Phase 1: Foundation,"[Foundation] Create PostHog types and event constants"
+"[Foundation] Add user identification on authentication","Call identifyUser() whenever a user authenticates to associate all subsequent events with the user profile.
+
+**Acceptance Criteria:**
+- Call identifyUser() in auth callback after successful login
+- Call setOrganizationContext() when organization context is available
+- Fetch subscription data to include plan in user properties
+- Verify in PostHog dashboard that user profiles are being created
+- Verify organizationId is set as group property
+
+**Files to modify:**
+- Auth callback location (check Better Auth documentation)
+- Possibly apps/client/src/middleware.ts if session refresh happens there
+
+**Implementation:**
+```typescript
+const session = await auth();
+if (session) {
+  const subscription = await prisma.subscription.findFirst({
+    where: { organizationId: session.activeOrganizationId }
+  });
+
+  identifyUser(session, subscription);
+
+  const organization = await prisma.organization.findUnique({
+    where: { id: session.activeOrganizationId },
+    include: { members: true }
+  });
+
+  if (organization) {
+    setOrganizationContext(organization);
+  }
+}
+```",P0,2,"infrastructure,analytics,auth",Albert,Phase 1: Foundation,"[Foundation] Create PostHog tracking helper functions"
+"[Foundation] Add automatic page view tracking","Track page views automatically using Next.js App Router navigation events with page metadata.
+
+**Acceptance Criteria:**
+- Page views tracked on route changes
+- Properties include: pathname, referrer, organizationSlug, productSlug
+- Extract orgSlug and productSlug from URL params
+- Verify in PostHog dashboard that pageviews are captured
+- No duplicate events on hydration/re-renders
+
+**Files to modify:**
+- apps/client/src/app/layout.tsx
+
+**Implementation:**
+```typescript
+'use client';
+import { useEffect } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
+import posthog from 'posthog-js';
+
+export function PostHogPageView() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (pathname) {
+      let url = window.origin + pathname;
+      if (searchParams.toString()) {
+        url = url + `?${searchParams.toString()}`;
+      }
+      posthog.capture('$pageview', { '$current_url': url, pathname });
+    }
+  }, [pathname, searchParams]);
+
+  return null;
+}
+```",P1,2,"infrastructure,analytics,navigation",Albert,Phase 1: Foundation,"[Foundation] Enable PostHog SDK globally"
+"[Onboarding] Track onboarding started event","Fire onboarding_started event when user enters the onboarding flow for the first time.
+
+**Acceptance Criteria:**
+- Event fired when onboarding store initializes with currentStep === 'welcome'
+- Event includes: organizationId, userId, timestamp
+- Event only fires once per user (check if already completed)
+- Verify event appears in PostHog
+
+**Files to modify:**
+- apps/client/src/app/_components/first-time-onboarding/onboarding-store.ts
+
+**Implementation:**
+```typescript
+if (currentStep === 'welcome' && !hasStartedOnboarding) {
+  trackEvent(ANALYTICS_EVENTS.ONBOARDING_STARTED, {
+    step: 'welcome',
+    organizationId: session.activeOrganizationId,
+    userId: session.userId
+  });
+}
+```",P0,1,"onboarding,analytics,activation",Albert,Phase 2: Onboarding,"[Foundation] Create PostHog tracking helper functions"
+"[Onboarding] Track onboarding step completion","Track when each onboarding step is completed with time spent on that step.
+
+**Acceptance Criteria:**
+- Track onboarding_step_completed when completeStep() is called
+- Calculate timeSpent by storing step start timestamp
+- Event properties: step name, timeSpent, organizationId, userId
+- All 7 steps tracked: welcome, loading-steps, invite-selection, product-setup, prompt-selection, subscription-selection, complete
+- Verify funnel in PostHog dashboard
+
+**Files to modify:**
+- apps/client/src/app/_components/first-time-onboarding/onboarding-store.ts
+
+**Implementation:**
+```typescript
+interface OnboardingState {
+  currentStep: OnboardingStep;
+  stepStartTime: number; // Add this
+}
+
+const completeStep = (step: OnboardingStep) => {
+  const timeSpent = Date.now() - get().stepStartTime;
+  trackEvent(ANALYTICS_EVENTS.ONBOARDING_STEP_COMPLETED, {
+    step,
+    timeSpent: Math.floor(timeSpent / 1000),
+    organizationId: session.activeOrganizationId,
+    userId: session.userId
+  });
+  set({
+    completedSteps: [...get().completedSteps, step],
+    stepStartTime: Date.now()
+  });
+};
+```",P0,2,"onboarding,analytics,activation",Albert,Phase 2: Onboarding,"[Onboarding] Track onboarding started event"
+"[Onboarding] Track onboarding completion","Fire onboarding_completed event when user reaches the final complete step.
+
+**Acceptance Criteria:**
+- Event fired when step === 'complete'
+- Calculate total onboarding time (from start to completion)
+- Properties: totalTimeSpent (seconds), stepsCompleted (count), organizationId, userId
+- Update user property: onboardingCompletedAt: timestamp
+- Verify event in PostHog
+
+**Files to modify:**
+- apps/client/src/app/_components/first-time-onboarding/steps/complete-step.tsx
+
+**Implementation:**
+```typescript
+useEffect(() => {
+  const totalTimeSpent = Date.now() - onboardingStartTime;
+  trackEvent(ANALYTICS_EVENTS.ONBOARDING_COMPLETED, {
+    totalTimeSpent: Math.floor(totalTimeSpent / 1000),
+    stepsCompleted: completedSteps.length,
+    organizationId: session.activeOrganizationId,
+    userId: session.userId
+  });
+  posthog.setPersonProperties({
+    onboardingCompletedAt: new Date().toISOString()
+  });
+}, []);
+```",P0,1,"onboarding,analytics,activation",Albert,Phase 2: Onboarding,"[Onboarding] Track onboarding step completion"
+"[Onboarding] Track onboarding abandonment","Track when users abandon onboarding (navigate away before completing).
+
+**Acceptance Criteria:**
+- Detect when user navigates away from onboarding flow
+- Event properties: lastStep, timeSpentTotal, stepsCompleted, organizationId, userId
+- Don't fire if onboarding already completed
+- Use beforeunload or Next.js navigation events to detect abandonment
+
+**Files to modify:**
+- Create wrapper component or modify existing onboarding container
+
+**Implementation:**
+```typescript
+useEffect(() => {
+  const handleBeforeUnload = () => {
+    if (!isOnboardingCompleted && currentStep !== 'complete') {
+      trackEvent(ANALYTICS_EVENTS.ONBOARDING_ABANDONED, {
+        lastStep: currentStep,
+        timeSpentTotal: Math.floor((Date.now() - startTime) / 1000),
+        stepsCompleted: completedSteps.length,
+        organizationId: session.activeOrganizationId,
+        userId: session.userId
+      });
+    }
+  };
+  window.addEventListener('beforeunload', handleBeforeUnload);
+  return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+}, [currentStep, isOnboardingCompleted]);
+```",P1,2,"onboarding,analytics,activation",Albert,Phase 2: Onboarding,"[Onboarding] Track onboarding step completion"
+"[Onboarding] Track domain analysis success/failure","Track whether AI-powered domain analysis succeeds or fails during onboarding.
+
+**Acceptance Criteria:**
+- Event: domain_analysis_completed with success/failure status
+- Properties: domain, detectedLanguage, hasLogo, hasDescription, hasDifferentiators, timeToAnalyze
+- Fire on API response in loading-steps component
+- Verify in PostHog
+
+**Files to modify:**
+- apps/client/src/app/_components/first-time-onboarding/steps/loading-steps.tsx
+
+**Implementation:**
+```typescript
+const analyzeDomain = async (domain: string) => {
+  const startTime = Date.now();
+  try {
+    const response = await fetch('/api/v1/onboarding/analyze-domain', {
+      method: 'POST',
+      body: JSON.stringify({ domain })
+    });
+    const data = await response.json();
+    trackEvent(ANALYTICS_EVENTS.DOMAIN_ANALYSIS_COMPLETED, {
+      domain,
+      success: true,
+      detectedLanguage: data.detectedLanguage,
+      hasLogo: !!data.logo,
+      timeToAnalyze: Math.floor((Date.now() - startTime) / 1000),
+      organizationId: session.activeOrganizationId
+    });
+  } catch (error) {
+    trackEvent(ANALYTICS_EVENTS.DOMAIN_ANALYSIS_COMPLETED, {
+      domain,
+      success: false,
+      error: error.message,
+      organizationId: session.activeOrganizationId
+    });
+  }
+};
+```",P1,1,"onboarding,analytics,activation",Albert,Phase 2: Onboarding,"[Onboarding] Track onboarding step completion"
+"[Feature Adoption] Track first conversation query created","Track when a user creates their first conversation query (key activation milestone).
+
+**Acceptance Criteria:**
+- Event: conversation_query_created with isFirstQuery: true flag
+- Properties: queryId, queryType, answerEngine, organizationId, userId, daysSinceSignup
+- Fire from API endpoint after query creation
+- Check if this is user's first query and set flag accordingly
+- Verify in PostHog
+
+**Files to modify:**
+- apps/client/src/app/api/v1/conversation-queries/route.ts
+
+**Implementation:**
+```typescript
+export async function POST(request: Request) {
+  const newQuery = await prisma.conversationQuery.create({ /* ... */ });
+  const queryCount = await prisma.conversationQuery.count({
+    where: { organizationId: session.activeOrganizationId }
+  });
+  trackEvent(ANALYTICS_EVENTS.CONVERSATION_QUERY_CREATED, {
+    queryId: newQuery.id,
+    queryType: newQuery.type,
+    answerEngine: newQuery.answerEngine,
+    organizationId: session.activeOrganizationId,
+    userId: session.userId,
+    daysSinceSignup: getDaysSinceSignup(session.userId),
+    isFirstQuery: queryCount === 1
+  });
+  if (queryCount === 1) {
+    trackEvent(ANALYTICS_EVENTS.FEATURE_FIRST_USED, {
+      feature: 'conversation_query',
+      organizationId: session.activeOrganizationId,
+      userId: session.userId
+    });
+  }
+}
+```",P0,2,"activation,analytics,feature-adoption",Albert,Phase 3: Feature Adoption,"[Foundation] Create PostHog tracking helper functions"
+"[Feature Adoption] Track custom view creation","Track when users create custom views (indicates power user behavior).
+
+**Acceptance Criteria:**
+- Event: custom_view_created
+- Properties: viewId, viewName, isDefault, organizationId, userId
+- Check if this is first view → fire feature_first_used with feature: 'custom_view'
+- Track from API endpoint after view creation
+
+**Files to modify:**
+- apps/client/src/app/api/v1/views/route.ts
+
+**Implementation:**
+```typescript
+export async function POST(request: Request) {
+  const newView = await prisma.view.create({ /* ... */ });
+  const viewCount = await prisma.view.count({
+    where: { organizationId: session.activeOrganizationId }
+  });
+  trackEvent(ANALYTICS_EVENTS.CUSTOM_VIEW_CREATED, {
+    viewId: newView.id,
+    viewName: newView.name,
+    isDefault: newView.isDefault,
+    organizationId: session.activeOrganizationId,
+    userId: session.userId,
+    isFirstView: viewCount === 1
+  });
+}
+```",P1,1,"feature-adoption,analytics,power-users",Albert,Phase 3: Feature Adoption,"[Feature Adoption] Track first conversation query created"
+"[Feature Adoption] Track tracked URL additions","Track when users add URLs to track (content analytics feature).
+
+**Acceptance Criteria:**
+- Event: tracked_url_added
+- Properties: urlId, url, totalTrackedUrls, organizationId, userId
+- Track first usage with feature_first_used
+- Fire from API endpoint
+
+**Files to modify:**
+- apps/client/src/app/api/v1/tracked-urls/route.ts",P1,1,"feature-adoption,analytics",Albert,Phase 3: Feature Adoption,"[Feature Adoption] Track first conversation query created"
+"[Feature Adoption] Track content gap analysis runs","Track when users run content gap analysis (advanced feature).
+
+**Acceptance Criteria:**
+- Event: content_gap_analysis_started
+- Event: content_gap_analysis_completed with results metadata
+- Properties: analysisId, conversationQueryId, contentGapType, organizationId
+- Track first usage
+- Fire from worker that processes analysis
+
+**Files to modify:**
+- Content gap analysis API route or worker",P2,1,"feature-adoption,analytics",Albert,Phase 3: Feature Adoption,"[Feature Adoption] Track first conversation query created"
+"[Engagement] Track daily prompt feedback","Track when users provide feedback on daily generated prompts.
+
+**Acceptance Criteria:**
+- Event: daily_prompt_viewed when prompt is shown
+- Event: daily_prompt_feedback when user clicks helpful/not helpful/dismissed
+- Properties: promptId, feedback, brandId, organizationId, userId
+- Fire from client-side component
+- Update database DailyPromptGeneration record with feedback
+
+**Files to modify:**
+- Daily prompt component
+- API endpoint for feedback submission",P0,2,"engagement,analytics,retention",Albert,Phase 4: Engagement,"[Foundation] Create PostHog tracking helper functions"
+"[Engagement] Track weekly report subscription changes","Track when users enable/disable weekly report email subscriptions.
+
+**Acceptance Criteria:**
+- Event: weekly_report_subscription_enabled
+- Event: weekly_report_subscription_disabled with optional reason
+- Properties: brandId, dayOfWeek, timeOfDay, timezone, organizationId, userId
+- Fire from API endpoint when subscription is created/updated
+
+**Files to modify:**
+- Weekly report subscription API endpoint",P0,1,"engagement,analytics,retention",Albert,Phase 4: Engagement,"[Foundation] Create PostHog tracking helper functions"
+"[Engagement] Track weekly report email sent","Track when weekly report emails are sent from the worker.
+
+**Acceptance Criteria:**
+- Event: weekly_report_email_sent
+- Properties: brandId, organizationId, userId, reportData (summary)
+- Fire from apps/worker/src/workers/weekly-report.ts after email sent
+- Include email ID from Resend for correlation
+- Track send failures with separate event
+
+**Files to modify:**
+- apps/worker/src/workers/weekly-report.ts
+- Export analytics functions from common package",P1,2,"engagement,analytics,email",Albert,Phase 4: Engagement,"[Engagement] Track weekly report subscription changes"
+"[Engagement] Track weekly report email engagement","Track email opens and link clicks from weekly reports using Resend webhooks.
+
+**Acceptance Criteria:**
+- Set up Resend webhook endpoint to receive email events
+- Event: weekly_report_email_opened
+- Event: weekly_report_email_clicked with link target
+- Correlate events with original email using emailId
+- Verify events flow to PostHog
+
+**Files to create:**
+- apps/client/src/app/api/webhooks/resend/route.ts
+
+**Files to modify:**
+- apps/worker/src/workers/weekly-report.ts - add tags to email",P2,3,"engagement,analytics,email",Albert,Phase 4: Engagement,"[Engagement] Track weekly report email sent"
+"[Engagement] Track opportunity interactions","Track when opportunities are created by AI and when users accept/dismiss them.
+
+**Acceptance Criteria:**
+- Event: opportunity_identified when AI creates opportunity
+- Event: opportunity_status_changed when user accepts/dismisses
+- Properties: opportunityId, queryRunType, rationale (truncated), status, brandId
+- Fire from API endpoint or worker that creates opportunities
+
+**Files to modify:**
+- Opportunity creation logic (worker or API)
+- apps/client/src/app/api/v1/opportunities/[opportunityId]/route.ts",P1,2,"engagement,analytics,value-realization",Albert,Phase 4: Engagement,"[Foundation] Create PostHog tracking helper functions"
+"[Monetization] Track entitlement limit warnings","Track when users approach or hit entitlement limits (critical conversion signal).
+
+**Acceptance Criteria:**
+- Event: entitlement_limit_warning when usage reaches 80% of limit
+- Event: entitlement_limit_reached when usage hits 100%
+- Event: entitlement_limit_exceeded when soft limit is exceeded
+- Properties: entitlementType, currentUsage, limit, percentage, organizationId
+- Fire from billing check API or wherever limits are enforced
+
+**Files to modify:**
+- apps/client/src/app/api/v1/billing/check/route.ts",P0,2,"monetization,analytics,conversion",Albert,Phase 5: Monetization,"[Foundation] Create PostHog tracking helper functions"
+"[Monetization] Track subscription plan views","Track when users view pricing/subscription page (conversion intent signal).
+
+**Acceptance Criteria:**
+- Event: subscription_plan_viewed
+- Properties: currentPlan, viewedPlan (if clicked specific plan), source (where they came from), organizationId
+- Fire from pricing page component
+- Track which plan cards are clicked
+
+**Files to modify:**
+- Subscription/pricing page component
+- Plan selection component from onboarding (step 6)",P1,1,"monetization,analytics,conversion",Albert,Phase 5: Monetization,"[Monetization] Track entitlement limit warnings"
+"[Monetization] Track subscription upgrades/downgrades","Track successful plan changes (upgrade, downgrade, or cancellation).
+
+**Acceptance Criteria:**
+- Event: subscription_upgraded when moving to higher tier
+- Event: subscription_downgraded when moving to lower tier
+- Event: subscription_canceled when subscription is canceled
+- Properties: fromPlan, toPlan, daysSinceSignup, trigger (user vs admin), organizationId
+- Fire from Stripe webhook handler
+- Update user properties in PostHog with new plan
+
+**Files to modify:**
+- apps/client/src/app/api/auth/stripe/webhook/route.ts",P0,2,"monetization,analytics,conversion",Albert,Phase 5: Monetization,"[Monetization] Track subscription plan views"
+"[Monetization] Track feature access blocks","Track when users try to access premium features they don't have access to.
+
+**Acceptance Criteria:**
+- Event: premium_feature_blocked
+- Properties: feature name, required plan, current plan, organizationId, userId
+- Fire when hard limit blocks action
+- Fire when feature flag check returns false for premium features
+
+**Files to modify:**
+- Add to feature flag check functions
+- Add to entitlement enforcement points",P1,1,"monetization,analytics,conversion",Albert,Phase 5: Monetization,"[Monetization] Track entitlement limit warnings"
+"[Power Users] Track integration connections","Track when users connect third-party integrations (PostHog, GA4, Linear).
+
+**Acceptance Criteria:**
+- Event: integration_connected for each integration
+- Event: integration_disconnected
+- Properties: integrationType, organizationId, userId, daysSinceSignup
+- Track first integration as feature_first_used
+- Fire from integration API endpoints
+
+**Files to modify:**
+- apps/client/src/app/api/v1/integrations/ga4/route.ts
+- apps/client/src/app/api/v1/integrations/posthog/route.ts
+- apps/client/src/app/api/v1/integrations/linear/route.ts",P1,2,"integrations,analytics,power-users",Albert,Phase 6: Power Users,"[Foundation] Create PostHog tracking helper functions"
+"[Power Users] Track team member invitations","Track when users invite team members (expansion signal).
+
+**Acceptance Criteria:**
+- Event: team_member_invited
+- Event: team_member_joined when invitation is accepted
+- Properties: inviteeEmail, inviteeRole, currentTeamSize, organizationId, inviterId
+- Fire from invitation API endpoint
+
+**Files to modify:**
+- Invitation API endpoints (create and accept)",P1,1,"expansion,analytics,team-growth",Albert,Phase 6: Power Users,"[Foundation] Create PostHog tracking helper functions"
+"[Power Users] Track dashboard page views","Track which dashboard pages users visit most frequently.
+
+**Acceptance Criteria:**
+- Leverage automatic pageview tracking
+- Add custom properties to pageviews: dashboardType (overview, citations, metrics, content-analytics)
+- Extract organizationSlug and productSlug from URL
+- Track time on page
+
+**Files to modify:**
+- Dashboard page components (if additional metadata needed)",P2,1,"engagement,analytics",Albert,Phase 6: Power Users,"[Foundation] Add automatic page view tracking"
+"[Power Users] Track export actions","Track when users export data (CSV, PDF, etc.) - indicates high engagement.
+
+**Acceptance Criteria:**
+- Event: data_exported
+- Properties: dataType (citations, reports, analytics), format (csv, pdf), recordCount, organizationId
+- Fire from export API endpoints or client-side export buttons
+
+**Files to modify:**
+- Export components/API endpoints",P2,1,"power-users,analytics",Albert,Phase 6: Power Users,"[Foundation] Create PostHog tracking helper functions"
+"[Retention] Track session start and inactivity","Track when users start sessions and calculate days since last activity.
+
+**Acceptance Criteria:**
+- Event: session_started with daysSinceLastSession
+- Fire on authentication
+- Calculate and store lastActivityAt in database
+- Update PostHog user property: lastActivityAt
+
+**Files to modify:**
+- Auth callback or middleware",P1,2,"retention,analytics,churn",Albert,Phase 7: Retention,"[Foundation] Add user identification on authentication"
+"[Retention] Create scheduled job for inactive users","Create a daily scheduled job that identifies and tracks inactive users (no activity in 7/14/30 days).
+
+**Acceptance Criteria:**
+- BullMQ or Temporal job runs daily
+- Query users with lastActivityAt > 7/14/30 days ago
+- Event: user_inactive_7_days, user_inactive_14_days, user_inactive_30_days
+- Properties: organizationId, userId, daysSinceLastActivity, lastActivityType
+- Add user segment in PostHog: At risk of churn
+
+**Files to create:**
+- apps/worker/src/workers/inactivity-tracker.ts
+
+**Database migration needed:**
+- Add lastActivityAt to User model
+- Add InactivityEvent model",P2,3,"retention,analytics,churn,infrastructure",Albert,Phase 7: Retention,"[Retention] Track session start and inactivity"
+"[Retention] Track feature flag exposures","Track when users are exposed to feature flags (for A/B test analysis).
+
+**Acceptance Criteria:**
+- Event: feature_flag_exposed
+- Properties: flagName, flagValue (enabled/disabled), organizationId, userId
+- Fire from feature flag check functions
+- Don't track same exposure multiple times in same session
+
+**Files to modify:**
+- apps/client/src/lib/feature-flags.ts",P2,2,"experimentation,analytics",Albert,Phase 7: Retention,"[Foundation] Create PostHog tracking helper functions"
+"[Dashboards] Create Activation Funnel dashboard","Build PostHog Insights dashboard showing onboarding funnel conversion rates.
+
+**Acceptance Criteria:**
+- Funnel insight: onboarding_started → each step → onboarding_completed
+- Show conversion rate at each step
+- Time to convert trend chart
+- Drop-off analysis: where users abandon
+- Cohort comparison: by signup date, by source
+- Set goal: >60% complete onboarding within 7 days
+
+**No code changes - PostHog configuration only**",P0,3,"dashboard,analytics,activation",Albert,Phase 8: Dashboards,"[Onboarding] Track onboarding completion"
+"[Dashboards] Create Feature Adoption dashboard","Build dashboard showing feature adoption rates and time-to-first-use.
+
+**Acceptance Criteria:**
+- Adoption curve: % of users who've used each feature by day 7/14/30/90
+- Time to first use: distribution chart for each feature
+- Feature matrix: which features correlate with retention
+- Top features by MAU
+- Stickiness: DAU/MAU per feature
+
+**No code changes - PostHog configuration only**",P0,3,"dashboard,analytics,adoption",Albert,Phase 8: Dashboards,"[Feature Adoption] Track content gap analysis runs"
+"[Dashboards] Create Engagement dashboard","Build dashboard showing daily/weekly active users and engagement depth metrics.
+
+**Acceptance Criteria:**
+- DAU/WAU/MAU trend chart
+- Stickiness ratio: DAU/MAU over time
+- Sessions per user (distribution)
+- Email engagement: weekly report open/click rates
+- Daily prompt feedback rate
+- Power user segmentation: top 10% by activity
+
+**No code changes - PostHog configuration only**",P1,3,"dashboard,analytics,engagement",Albert,Phase 8: Dashboards,"[Engagement] Track opportunity interactions"
+"[Dashboards] Create Monetization dashboard","Build dashboard showing conversion funnel from free to paid and upsell indicators.
+
+**Acceptance Criteria:**
+- Conversion funnel: signup → limit warning → plan viewed → upgraded
+- Time to upgrade distribution
+- Limit hit frequency by entitlement type
+- Premium feature block rate (paywall hits)
+- MRR trend (if integrated with Stripe)
+- Churn rate by plan
+
+**No code changes - PostHog configuration only**",P0,3,"dashboard,analytics,monetization",Albert,Phase 8: Dashboards,"[Monetization] Track feature access blocks"
+"[Dashboards] Create Retention & Churn dashboard","Build dashboard showing cohort retention and early churn indicators.
+
+**Acceptance Criteria:**
+- Cohort retention table: Day 1/7/30/90 by signup week
+- Churn curve: % of users churned by days since signup
+- Inactive user count: 7/14/30 day buckets
+- Resurrection rate: % of inactive users who return
+- Retention by plan tier
+
+**No code changes - PostHog configuration only**",P1,3,"dashboard,analytics,retention",Albert,Phase 8: Dashboards,"[Retention] Track feature flag exposures"
+"[Alerts] Set up critical metric alerts","Configure PostHog or Slack alerts for critical metric changes.
+
+**Acceptance Criteria:**
+- Alert: Onboarding completion rate drops below 50%
+- Alert: DAU drops by >20% week-over-week
+- Alert: Churn spike (>5 cancellations in one day)
+- Alert: Payment failures (if integrated with Stripe)
+- Alerts sent to Slack channel: #plg-metrics
+
+**No code changes - PostHog configuration only**",P1,2,"monitoring,analytics,alerts",Albert,Phase 9: Alerts,"[Dashboards] Create Retention & Churn dashboard"
+"[Alerts] Create weekly PLG metrics report","Set up automated weekly summary report of key PLG metrics sent to team.
+
+**Acceptance Criteria:**
+- Report includes: activation rate, DAU/WAU, conversion rate, churn rate, top features
+- Sent every Monday at 9am to Slack #plg-metrics
+- Include week-over-week change indicators
+- Link to PostHog dashboards for deep dive
+
+**No code changes - PostHog configuration only**",P2,2,"reporting,analytics",Albert,Phase 9: Alerts,"[Alerts] Set up critical metric alerts"
+"[Documentation] Document all tracked events","Create comprehensive documentation of all PostHog events, properties, and when they fire.
+
+**Acceptance Criteria:**
+- Create ANALYTICS_EVENTS.md documenting every event
+- Include: event name, description, properties, when it fires, which component/file
+- Create Notion page or wiki with same info for non-technical team
+- Document dashboard URLs and what each shows
+
+**Files to create:**
+- docs/ANALYTICS_EVENTS.md
+- docs/POSTHOG_DASHBOARDS.md",P1,2,documentation,Albert,Phase 10: Documentation,"[Alerts] Create weekly PLG metrics report"
+"[Documentation] Create analytics implementation guide","Write guide for engineers on how to add new analytics events going forward.
+
+**Acceptance Criteria:**
+- Document: how to add new event types
+- Document: how to add new properties
+- Document: testing analytics locally
+- Document: verifying events in PostHog
+- Include code examples
+
+**Files to create:**
+- docs/ANALYTICS_IMPLEMENTATION_GUIDE.md",P2,2,documentation,Albert,Phase 10: Documentation,"[Documentation] Document all tracked events"
+"[Documentation] Train team on PostHog dashboards","Conduct training session with team on how to use PostHog dashboards and interpret metrics.
+
+**Acceptance Criteria:**
+- Schedule 1-hour training session
+- Walk through each dashboard
+- Explain key metrics and why they matter
+- Show how to create custom insights
+- Record session for future reference
+
+**Deliverable:**
+- Training session scheduled and completed
+- Recording uploaded to shared drive",P1,1,training,Albert,Phase 10: Documentation,"[Dashboards] Create Retention & Churn dashboard"
